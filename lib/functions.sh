@@ -19,6 +19,59 @@ function error_handler () {
   exit "$exit_code"
 }
 
+function helm_values_parser_generic () {
+
+  # obtain the required function arguments
+  BASE_HELM_CHART_VERSION="$1"
+  BASE_HELM_CHART_DIR="$2"
+  BASE_VALUES_JSON="$BASE_HELM_CHART_DIR/values.json"
+  TMP_IMG_LIST="$BASE_HELM_CHART_DIR/image_list.txt"  
+
+  # within the base helm chart directory obtain 
+  # the base helm values file
+  helm_values_file=$(find "$BASE_HELM_CHART_DIR" -mindepth 1 -maxdepth 1 \
+	             -iname "values.yaml" -type f)
+
+  # convert the values.yaml file to values.json in
+  # the base helm chart directory
+  yaml2json "$helm_values_file" > "$BASE_VALUES_JSON"
+
+  # from the json values file extract the required paths 
+  # for generating the list of images
+  jq -c paths "$BASE_VALUES_JSON" | \
+  awk -v IGNORECASE=1 '/image/ && !/pull|sha|digest/' | \
+  tr -d '[]"\"' | tr ',' '.' | sed 's/^/./' > "$BASE_HELM_CHART_DIR/image_paths.txt"
+
+  # extract the images based on the paths from values.json
+  while IFS= read -r path; do
+	
+    # check if the line in the file ends with image
+    if [[ "$path" =~ \.image$ || "$path" =~ \image$ || "$path" =~ Image$ ]]; then
+      
+      # check if the path has a registry key but not a tag key
+      if jq -e "$path".registry "$BASE_VALUES_JSON" &> /dev/null && ! jq -e "$path".tag "$BASE_VALUES_JSON" &> /dev/null; then
+	# check if the path is for kubectl image
+	if [[ "$path" =~ "kubectlImage" ]]; then
+	  kube_version_tag=$(curl -sL "$GITHUB_BASE_URL/rackerlabs/genestack/refs/heads/main/ansible/inventory/genestack/group_vars/k8s_cluster/k8s-cluster.yml" | \
+                             grep -i kube_version | awk '{print $2}')
+          jq -r "$path" "$BASE_VALUES_JSON" | jq -r --arg tag "$kube_version_tag" '"\(.registry)/\(.repository):\($tag)"' \
+	  >> "$TMP_IMG_LIST"
+	else
+	  jq -r "$path" "$BASE_VALUES_JSON" | jq -r --arg tag "$BASE_HELM_CHART_VERSION" '"\(.registry)/\(.repository):\($tag)"' \
+          >> "$TMP_IMG_LIST"      
+        fi
+      # check if the path has a tag key but not the registry key
+      elif jq -e "$path".tag "$BASE_VALUES_JSON" &> /dev/null && ! jq -e "$path".registry "$BASE_VALUES_JSON" &> /dev/null; then
+        jq -r "$path" "$BASE_VALUES_JSON" | jq -r '"\(.repository):\(.tag)"' >> "$TMP_IMG_LIST"
+      # check if the path has both registry and tag key
+      elif jq -e "$path".registry "$BASE_VALUES_JSON" &> /dev/null && jq -e "$path".tag "$BASE_VALUES_JSON" &> /dev/null; then
+        jq -r "$path" "$BASE_VALUES_JSON" | jq -r '"\(.registry)/\(.repository):\(.tag)"' >> "$TMP_IMG_LIST"
+      fi
+    fi
+  done < "$BASE_HELM_CHART_DIR/image_paths.txt"
+}
+
+
 
 function add_helm_repo () {
 

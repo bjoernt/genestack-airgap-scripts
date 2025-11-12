@@ -582,7 +582,7 @@ function generate_list_monitoring () {
   helm repo update &> /dev/null
 
   # Pullthe helm chart for fluentbit and untar in a dir
-  helm pull openstack-helm/fluent-bit --version "$fluentbit_chart_version" \
+  helm pull openstack-helm/fluentbit --version "$fluentbit_chart_version" \
     --untar --untardir /var/tmp/fluent &> /dev/null
 
   # Find the helm chart directory
@@ -600,6 +600,35 @@ function generate_list_monitoring () {
 
   # Generate the required images for prometheus
   print_log "INFO" "Generating required list of container images for prometheus"
+
+  # Generate the required images for loki
+  print_log "INFO" "Generating required list of container images for loki"
+
+  # First obtain the helm chart version for loki from
+  # helm-chart-versions.yaml
+  loki_chart_version=$(grep 'loki:' "$GENESTACK_CHART_VERSION_FILE" | sed 's/.*loki: *//')
+
+  # If the directory for helm chart already exists remove the directory
+  # and then download the helm chart
+  if [ -d "/var/tmp/loki" ]; then
+    rm -rf "/var/tmp/loki"
+  fi
+
+  helm repo add grafana https://grafana.github.io/helm-charts &> /dev/null
+  helm repo update &> /dev/null
+
+  # Pull the helm chart for loki and untar in a dir
+  # loki helm chart version is hardcoded in the documentation
+  # 5.47.2
+  print_log "INFO" "Loki helm chart version is specified in the docs to be: 5.47.2"
+  helm pull grafana/loki --version "5.47.2" \
+    --untar --untardir /var/tmp/loki &> /dev/null
+
+  # Find the helm chart directory
+  helm_chart_dir=$(find /var/tmp/loki/ -mindepth 1 -maxdepth 1 -type d)
+
+  # call the function to generate the list of images
+  helm_values_parser_generic "5.47.2" "$helm_chart_dir"
 
 }
 
